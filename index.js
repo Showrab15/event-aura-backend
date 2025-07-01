@@ -9,7 +9,9 @@ app.use(express.json());
 app.use(cookieParser());
 const allowedOrigins = [
   "http://localhost:5173", // for local dev
-  "https://wondrous-kulfi-1da8f4.netlify.app", // ✅ your deployed frontend
+  "https://wondrous-kulfi-1da8f4.netlify.app", 
+  "https://eventa-aura.vercel.app"
+  // ✅ your deployed frontend
 ];
 
 app.use(
