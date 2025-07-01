@@ -7,15 +7,26 @@ const serverless = require("serverless-http");
 
 app.use(express.json());
 app.use(cookieParser());
+const allowedOrigins = [
+  "http://localhost:5173", // for local dev
+  "https://wondrous-kulfi-1da8f4.netlify.app", // ✅ your deployed frontend
+];
+
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://eventaura-server.vercel.app"],
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   })
 );
-const SECRET =
-  "8da1b3bebbf100c8f6f3421321e36b3bd24d74db29e5666171d41eca9f423c8b03bcf1822fd7013f8d605e374c92dfc5c8bf47e0864d665ef06c168f4a4fa9b2";
+// const SECRET = process.env.JWT_SECRET;
 
+// console.log(SECRET)
 const crypto = require("crypto");
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
@@ -25,7 +36,7 @@ require("dotenv").config();
 const port = 5000;
 
 // console.log(process.env.MONGODB_USER)
-// console.log(process.env.MONGODB_PASS)
+// console.log(process.env.JWT_SECRET)
 const hashPassword = (password) => {
   return crypto.createHash("sha256").update(password).digest("hex");
 };
@@ -44,7 +55,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     const db = client.db("eventAuraDB");
     const usersCollection = db.collection("users");
@@ -55,7 +66,7 @@ async function run() {
       if (!token) return res.sendStatus(401);
 
       try {
-        const decoded = jwt.verify(token, SECRET);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
         req.user = decoded;
         next();
       } catch {
@@ -97,14 +108,14 @@ async function run() {
 
       const jwt = require("jsonwebtoken"); // ✅ ensure this is at the top of your file
 
-      const token = jwt.sign({ id: user._id, name: user.name }, SECRET, {
+      const token = jwt.sign({ id: user._id, name: user.name }, process.env.JWT_SECRET, {
         expiresIn: "7d",
       });
 
       res.cookie("token", token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production", // ✅ use secure only in production
-        sameSite: "Lax",
+        secure: true, // 🔥 always true with SameSite=None
+        sameSite: "None", // 🔥 required for cross-origin cookies
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
@@ -126,7 +137,7 @@ async function run() {
       if (!token) return res.status(401).json({ message: "Unauthorized" });
 
       try {
-        const user = jwt.verify(token, SECRET);
+        const user = jwt.verify(token, process.env.JWT_SECRET);
         return res.json(user);
       } catch (err) {
         return res.status(401).json({ message: "Invalid token" });
@@ -339,7 +350,7 @@ async function run() {
       }
 
       try {
-        const decoded = jwt.verify(token, SECRET);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
         res.json({ user: decoded }); // or just res.sendStatus(200)
       } catch (err) {
         return res.status(401).json({ message: "Invalid token" });
@@ -447,6 +458,6 @@ app.get("/", (req, res) => {
 // module.exports = app;
 // module.exports.handler = serverless(app);
 
-app.listen(port,()=>{
-    console.log(`Event Aura are sitting on port ${port}`)
-})
+app.listen(port, () => {
+  console.log(`Event Aura are sitting on port ${port}`);
+});
