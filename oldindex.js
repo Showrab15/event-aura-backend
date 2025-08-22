@@ -1,25 +1,17 @@
-// ========== Imports ==========
 const express = require("express");
+const app = express();
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
 const serverless = require("serverless-http");
-const crypto = require("crypto");
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-require("dotenv").config();
-
-// ========== App Config ==========
-const app = express();
-const port = 5000;
 
 app.use(express.json());
 app.use(cookieParser());
-
-// ========== CORS Configuration ==========
 const allowedOrigins = [
-  "http://localhost:5173", // Local dev
+  "http://localhost:5173", // for local dev
   "https://wondrous-kulfi-1da8f4.netlify.app",
-  "https://eventa-aura.vercel.app", // ✅ Deployed frontend
+  "https://eventa-aura.vercel.app",
+  // ✅ your deployed frontend
 ];
 
 app.use(
@@ -34,14 +26,26 @@ app.use(
     credentials: true,
   })
 );
+// const SECRET = process.env.JWT_SECRET;
 
-// ========== Utility Functions ==========
-const hashPassword = (password) =>
-  crypto.createHash("sha256").update(password).digest("hex");
+// console.log(SECRET)
+const crypto = require("crypto");
 
-// ========== MongoDB Setup ==========
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+
+require("dotenv").config();
+
+const port = 5000;
+
+// console.log(process.env.MONGODB_USER)
+// console.log(process.env.JWT_SECRET)
+const hashPassword = (password) => {
+  return crypto.createHash("sha256").update(password).digest("hex");
+};
+
 const uri = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PASS}@cluster0.bter72s.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-
+// console.log(uri);
+// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -50,14 +54,15 @@ const client = new MongoClient(uri, {
   },
 });
 
-// ========== Main Server Function ==========
 async function run() {
   try {
+    // Connect the client to the server	(optional starting in v4.7)
+    // await client.connect();
+
     const db = client.db("eventAuraDB");
     const usersCollection = db.collection("users");
     const eventsCollection = db.collection("events");
 
-    // ========== Middleware: Auth Checker ==========
     const authenticate = (req, res, next) => {
       const token = req.cookies.token;
       if (!token) return res.sendStatus(401);
@@ -70,17 +75,16 @@ async function run() {
         return res.sendStatus(403);
       }
     };
-
-    // ========== Auth Routes ==========
-
-    // Register User
+    // REGISTER
     app.post("/register", async (req, res) => {
       const { name, email, password, photoURL } = req.body;
+
       const existing = await usersCollection.findOne({ email });
       if (existing)
         return res.status(409).send({ message: "Email already in use" });
 
       const hashed = hashPassword(password);
+
       const result = await usersCollection.insertOne({
         name,
         email,
@@ -91,7 +95,7 @@ async function run() {
       res.send({ success: true, userId: result.insertedId });
     });
 
-    // Login User
+    // Login route
     app.post("/login", async (req, res) => {
       const { email, password } = req.body;
 
@@ -105,32 +109,36 @@ async function run() {
       const token = jwt.sign(
         { id: user._id, name: user.name },
         process.env.JWT_SECRET,
-        { expiresIn: "7d" }
+        {
+          expiresIn: "7d",
+        }
       );
 
-    res.cookie("token", token, {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production", // only secure in prod
-  sameSite: "None",
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-});
+      // ✅ SET COOKIE HERE
+      res.cookie("token", token, {
+        httpOnly: true,
+        secure: true, // ✅ needed on Netlify/Vercel (HTTPS only)
+        sameSite: "None", // ✅ for cross-origin
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
 
-
+      // ✅ Send user data in JSON (but token is stored in cookie)
       res.json({ user: { name: user.name, photoURL: user.photoURL } });
     });
 
-    // Logout User
     app.post("/logout", (req, res) => {
       res.clearCookie("token", {
         httpOnly: true,
         secure: true,
         sameSite: "None",
       });
+
       res.status(200).json({ message: "Logged out successfully" });
     });
 
-    // Get Current User
     app.get("/me", (req, res) => {
+      console.log("Token from cookie:", req.cookies.token);
+
       const token = req.cookies.token;
       if (!token) return res.status(401).json({ message: "No token" });
 
@@ -143,20 +151,7 @@ async function run() {
       }
     });
 
-    // Auth Check
-    app.get("/check-auth", (req, res) => {
-      const token = req.cookies.token;
-      if (!token) return res.status(401).json({ message: "Not logged in" });
-
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        res.json({ user: decoded });
-      } catch {
-        res.status(401).json({ message: "Invalid token" });
-      }
-    });
-
-    // ========== Event Routes ==========
+    // ✅ Moved outside of any other route
     const {
       startOfWeek,
       endOfWeek,
@@ -166,16 +161,17 @@ async function run() {
       subMonths,
     } = require("date-fns");
 
-    // Get Events with Filters
     app.get("/events", authenticate, async (req, res) => {
       try {
         const { search, filter } = req.query;
         let query = {};
 
+        // 🔍 Search by title
         if (search) {
           query.title = { $regex: search, $options: "i" };
         }
 
+        // 🗓️ Date filter
         const now = new Date();
         let startDate, endDate;
 
@@ -185,27 +181,28 @@ async function run() {
             startDate.setHours(0, 0, 0, 0);
             endDate = new Date();
             endDate.setHours(23, 59, 59, 999);
+            query.dateTime = { $gte: startDate, $lte: endDate };
             break;
           case "currentWeek":
             startDate = startOfWeek(now);
             endDate = endOfWeek(now);
+            query.dateTime = { $gte: startDate, $lte: endDate };
             break;
           case "lastWeek":
             startDate = startOfWeek(subWeeks(now, 1));
             endDate = endOfWeek(subWeeks(now, 1));
+            query.dateTime = { $gte: startDate, $lte: endDate };
             break;
           case "currentMonth":
             startDate = startOfMonth(now);
             endDate = endOfMonth(now);
+            query.dateTime = { $gte: startDate, $lte: endDate };
             break;
           case "lastMonth":
             startDate = startOfMonth(subMonths(now, 1));
             endDate = endOfMonth(subMonths(now, 1));
+            query.dateTime = { $gte: startDate, $lte: endDate };
             break;
-        }
-
-        if (startDate && endDate) {
-          query.dateTime = { $gte: startDate, $lte: endDate };
         }
 
         const userId = req.user.id;
@@ -215,6 +212,7 @@ async function run() {
           .sort({ dateTime: -1 })
           .toArray();
 
+        // Add joined: true/false to each event
         const eventsWithJoinStatus = events.map((event) => {
           const joined = event.attendees?.includes(userId);
           return { ...event, joined };
@@ -227,7 +225,7 @@ async function run() {
       }
     });
 
-    // Add New Event
+    // ✅ Now this route can stay as-is
     app.post("/add-events", authenticate, async (req, res) => {
       try {
         const { title, dateTime, location, description, attendeeCount } =
@@ -236,7 +234,7 @@ async function run() {
         const newEvent = {
           title,
           name: req.user.name,
-          dateTime: new Date(dateTime),
+          dateTime: new Date(req.body.dateTime),
           location,
           description,
           attendeeCount: attendeeCount || 0,
@@ -253,12 +251,13 @@ async function run() {
       }
     });
 
-    // Join Event
+    // ✅ Join event route
     app.post("/events/join/:id", authenticate, async (req, res) => {
       try {
         const eventId = req.params.id;
         const userId = req.user.id;
 
+        // Check if user has already joined
         const alreadyJoined = await eventsCollection.findOne({
           _id: new ObjectId(eventId),
           attendees: userId,
@@ -274,7 +273,7 @@ async function run() {
           { _id: new ObjectId(eventId) },
           {
             $inc: { attendeeCount: 1 },
-            $addToSet: { attendees: userId },
+            $addToSet: { attendees: userId }, // Prevent duplicates
           }
         );
 
@@ -289,11 +288,26 @@ async function run() {
       }
     });
 
-    // My Events
+    app.get("/check-auth", (req, res) => {
+      const token = req.cookies.token;
+
+      if (!token) {
+        return res.status(401).json({ message: "Not logged in" });
+      }
+
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        res.json({ user: decoded }); // or just res.sendStatus(200)
+      } catch (err) {
+        return res.status(401).json({ message: "Invalid token" });
+      }
+    });
+
+    // Get events posted by the logged-in user
     app.get("/my-events", authenticate, async (req, res) => {
       try {
         const myEvents = await eventsCollection
-          .find({ name: req.user.name })
+          .find({ name: req.user.name }) // or match userId if stored
           .sort({ dateTime: -1 })
           .toArray();
         res.json(myEvents);
@@ -302,12 +316,11 @@ async function run() {
       }
     });
 
-    // Update Event
+    // Update an event
     app.put("/events/:id", authenticate, async (req, res) => {
       const { id } = req.params;
       const { title, dateTime, location, description, attendeeCount } =
         req.body;
-
       try {
         const result = await eventsCollection.updateOne(
           { _id: new ObjectId(id), name: req.user.name },
@@ -317,7 +330,7 @@ async function run() {
               dateTime: new Date(dateTime),
               location,
               description,
-              attendeeCount,
+              attendeeCount, // ← now accepting updates
             },
           }
         );
@@ -334,7 +347,7 @@ async function run() {
       }
     });
 
-    // Delete Event
+    // Delete an event
     app.delete("/events/:id", authenticate, async (req, res) => {
       const { id } = req.params;
       try {
@@ -355,13 +368,13 @@ async function run() {
       }
     });
 
-    // Get Featured Upcoming Events (next 5)
+    // Get 5 upcoming events, sorted by date ascending
     app.get("/featured-upcoming-events", async (req, res) => {
       try {
         const now = new Date();
         const events = await eventsCollection
           .find({ dateTime: { $gte: now } })
-          .sort({ dateTime: 1 })
+          .sort({ dateTime: 1 }) // Earliest first
           .limit(5)
           .toArray();
 
@@ -371,26 +384,26 @@ async function run() {
       }
     });
 
-    // MongoDB ping check
+    // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!"
+    );
   } finally {
-    // Optional: await client.close();
+    // Ensures that the client will close when you finish/error
+    // await client.close();
   }
 }
-
 run().catch(console.dir);
 
-// ========== Root Route ==========
 app.get("/", (req, res) => {
   res.send("Event Aura is running");
 });
 
-// ========== Serverless Export (Uncomment for Vercel) ==========
+// Add this export so Vercel can invoke your app as a serverless function
 // module.exports = app;
 // module.exports.handler = serverless(app);
 
-// ========== Local Server ==========
 app.listen(port, () => {
-  console.log(`Event Aura is sitting on port ${port}`);
+  console.log(`Event Aura are sitting on port ${port}`);
 });
